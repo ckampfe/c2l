@@ -6,6 +6,7 @@ use conch_parser::ast::*;
 use conch_parser::lexer::Lexer;
 use conch_parser::parse::DefaultParser;
 use std::error::Error;
+use std::fmt::Debug;
 use std::io::Write;
 use structopt::StructOpt;
 use xml::escape::escape_str_pcdata;
@@ -58,76 +59,20 @@ fn main() -> Result<(), Box<dyn Error>> {
                     Ok(TopLevelCommand(List(AndOrList {
                         first: Single(Simple(x)),
                         rest: _rest,
-                    }))) => {
-                        match *x {
-                            SimpleCommand {
-                                redirects_or_env_vars,
-                                redirects_or_cmd_words,
-                            } => {
-                                if !redirects_or_cmd_words.is_empty() {
-                                    write_element(w, "key", None, |w| {
-                                        write_chars(w, "ProgramArguments")
-                                    })?;
+                    }))) => match *x {
+                        SimpleCommand {
+                            redirects_or_env_vars,
+                            redirects_or_cmd_words,
+                        } => {
+                            if !redirects_or_cmd_words.is_empty() {
+                                write_program_arguments(w, redirects_or_cmd_words)?;
+                            }
 
-                                    write_element(w, "array", None, |w| {
-                                        for el in &redirects_or_cmd_words {
-                                            match el {
-                                                RedirectOrCmdWord::CmdWord(TopLevelWord(
-                                                    conch_parser::ast::ComplexWord::Single(
-                                                        conch_parser::ast::Word::Simple(
-                                                            conch_parser::ast::SimpleWord::Literal(
-                                                                l,
-                                                            ),
-                                                        ),
-                                                    ),
-                                                )) => {
-                                                    write_element(w, "string", None, |w| {
-                                                        write_chars(w, l)
-                                                    })?;
-                                                }
-                                                e => panic!(
-                                                    "Redirect or command not supported: {:?}",
-                                                    e
-                                                ),
-                                            }
-                                        }
-                                        Ok(())
-                                    })?;
-                                }
-
-                                if !redirects_or_env_vars.is_empty() {
-                                    write_element(w, "key", None, |w| {
-                                        write_chars(w, "EnvironmentVariables")
-                                    })?;
-
-                                    write_element(w, "dict", None, |w| {
-                                        for el in &redirects_or_env_vars {
-                                            match el {
-                                        EnvVar(
-                                            key,
-                                            Some(TopLevelWord(
-                                                conch_parser::ast::ComplexWord::Single(
-                                                    conch_parser::ast::Word::Simple(
-                                                        conch_parser::ast::SimpleWord::Literal(l),
-                                                    ),
-                                                ),
-                                            )),
-                                        ) => {
-                                            write_element(w, "key", None, |w| write_chars(w, key))?;
-
-                                            write_element(w, "string", None, |w| {
-                                                write_chars(w, l)
-                                            })?;
-                                        }
-                                        e => panic!("Redirect or envvar not supported: {:?}", e),
-                                    }
-                                        }
-                                        Ok(())
-                                    })?;
-                                }
+                            if !redirects_or_env_vars.is_empty() {
+                                write_env_vars(w, redirects_or_env_vars)?;
                             }
                         }
-                    }
+                    },
                     _ => panic!(),
                 }
             }
@@ -149,6 +94,55 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn write_program_arguments<W: Write, R: Debug, T: Debug + AsRef<str>>(
+    w: &mut EventWriter<W>,
+    redirects_or_cmd_words: Vec<RedirectOrCmdWord<R, TopLevelWord<T>>>,
+) -> Result<(), Box<dyn Error>> {
+    write_element(w, "key", None, |w| write_chars(w, "ProgramArguments"))?;
+
+    write_element(w, "array", None, |w| {
+        for el in &redirects_or_cmd_words {
+            match el {
+                RedirectOrCmdWord::CmdWord(TopLevelWord(
+                    conch_parser::ast::ComplexWord::Single(conch_parser::ast::Word::Simple(
+                        conch_parser::ast::SimpleWord::Literal(l),
+                    )),
+                )) => {
+                    write_element(w, "string", None, |w| write_chars(w, l))?;
+                }
+                e => panic!("Redirect or command not supported: {:?}", e),
+            }
+        }
+        Ok(())
+    })
+}
+
+fn write_env_vars<W: Write, R: Debug, V: Debug + AsRef<str>, T: Debug + AsRef<str>>(
+    w: &mut EventWriter<W>,
+    redirects_or_env_vars: Vec<RedirectOrEnvVar<R, V, TopLevelWord<T>>>,
+) -> Result<(), Box<dyn Error>> {
+    write_element(w, "key", None, |w| write_chars(w, "EnvironmentVariables"))?;
+
+    write_element(w, "dict", None, |w| {
+        for el in &redirects_or_env_vars {
+            match el {
+                EnvVar(
+                    key,
+                    Some(TopLevelWord(conch_parser::ast::ComplexWord::Single(
+                        conch_parser::ast::Word::Simple(conch_parser::ast::SimpleWord::Literal(l)),
+                    ))),
+                ) => {
+                    write_element(w, "key", None, |w| write_chars(w, key))?;
+
+                    write_element(w, "string", None, |w| write_chars(w, l))?;
+                }
+                e => panic!("Redirect or envvar not supported: {:?}", e),
+            }
+        }
+        Ok(())
+    })
+}
+
 fn write_chars<W: Write, I: AsRef<str>>(
     w: &mut EventWriter<W>,
     i: I,
@@ -166,16 +160,14 @@ fn write_element<W: Write>(
     attributes: Option<Vec<[&str; 2]>>,
     job: impl Fn(&mut EventWriter<W>) -> Result<(), Box<dyn Error>>,
 ) -> Result<(), Box<dyn Error>> {
+    let mut start = XmlEvent::start_element(element);
     if let Some(attrs) = attributes {
-        let mut start = XmlEvent::start_element(element);
         for [k, v] in attrs {
             start = start.attr(k, v);
         }
-        writer.write(start)?;
-    } else {
-        let start = XmlEvent::start_element(element);
-        writer.write(start)?;
     }
+
+    writer.write(start)?;
 
     job(writer)?;
 
