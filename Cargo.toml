@@ -1,0 +1,12 @@
+[package]
+name = "c2l"
+version = "0.1.0"
+authors = ["Clark Kampfe <clark.kampfe@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+conch-parser = "0.1"
+structopt = "0.3"
+xml-rs = "0.8.2"
